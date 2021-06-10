@@ -59,9 +59,14 @@ namespace ExchangeGraphTool
             Console.WriteLine("Find events...");
             var eventLists = await calendar.FindEvents(mailboxes, transactionId);
 
+            int total = 0;
+
             foreach(var list in eventLists)
             {
-                Console.WriteLine($"Found {list.Value.Count} events for {list.Key}");
+                int count = list.Value.Count;
+                total += count;
+
+                Console.WriteLine($"Found {count} events for {list.Key}");
 
                 if (dumpEvents)
                 {
@@ -70,7 +75,9 @@ namespace ExchangeGraphTool
                         Console.WriteLine($"{e.Start.DateTime} - {e.End.DateTime}: {e.Subject}");
                     }
                 }
-            }            
+            }
+
+            Console.WriteLine($"Total: {total} events");
         }
 
         static async Task HandleCreate(string clientId, string tenantId, string clientSecret, string mailboxTemplate, int numMailbox, int? startMailbox, int? maxEvents, string transactionId)
@@ -100,9 +107,9 @@ namespace ExchangeGraphTool
             var calendar = new Calendar(factory.Client);
             var mailboxes = Enumerable.Range(startMailbox ?? 1, numMailbox).Select(i => string.Format(mailboxTemplate, i));
 
-            Console.WriteLine("Deleting events...");
-
             var events = await calendar.FindEvents(mailboxes, transactionId);
+
+            Console.WriteLine($"Deleting {events.Values.SelectMany(e => e).Count()} events...");
 
             await calendar.DeleteEvents(events);
         }

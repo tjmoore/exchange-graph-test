@@ -55,13 +55,22 @@ namespace ExchangeGraphTool
 
                 for (int n = 1; n <= numEvents; n++)
                 {
-                    requests.Add(new BatchRequestStep(mailbox, BuildCreateEventRequest(mailbox, $"Event {eventNum}", start, 15, transactionId)));
+                    string stepId = Guid.NewGuid().ToString();
+                    requests.Add(new BatchRequestStep(stepId, BuildCreateEventRequest(mailbox, $"Event {eventNum}", start, 15, transactionId)));
+                   
                     start = start.AddMinutes(30);
+
                     eventNum++;
                 }
             }
 
-            var batches = requests.Batch(BatchSize);
+
+            // TODO: batches work in parallel on the server but per mailbox there's a 4 request concurrent limit.
+            // Group into 4s, or spread across batches ensuring no more than 4 of same mailbox in a batch?
+
+            var batches = requests.Batch(BatchSize).ToList();
+
+            Console.WriteLine($"Sending {requests.Count} requests in {batches.Count} batches");
 
             foreach (var batch in batches)
             {
@@ -126,18 +135,25 @@ namespace ExchangeGraphTool
             if (eventLists == null || !eventLists.Any())
                 return;
 
-            // Deletes in a batch doesn't appear to work. It just deletes the first each time, so using a loop which will be slow.
+            var requests = (from l in eventLists
+                            from e in l.Value
+                            select new BatchRequestStep(e.ICalUId, BuildDeleteEventRequest(l.Key, e.Id))).ToList();
 
-            foreach (var l in eventLists)
+            // TODO: batches work in parallel on the server but per mailbox there's a 4 request concurrent limit.
+            // Group into 4s, or spread across batches ensuring no more than 4 of same mailbox in a batch?
+
+            var batches = requests.Batch(BatchSize).ToList();
+
+            Console.WriteLine($"Sending {requests.Count} requests in {batches.Count} batches");
+
+            foreach (var batch in batches)
             {
-                foreach (var e in l.Value)
-                {
-                    await _client
-                        .Users[l.Key]
-                        .Events[e.Id]
-                        .Request()
-                        .DeleteAsync(token);
-                }
+                var batchRequest = new BatchRequestContent(batch.ToArray());
+
+                await _client
+                    .Batch
+                    .Request()
+                    .PostAsync(batchRequest, token);
             }
         }
 
@@ -183,6 +199,19 @@ namespace ExchangeGraphTool
                 .Request()
                 .Top(99999)
                 .OrderBy("start/dateTime");
+        }
+
+        private HttpRequestMessage BuildDeleteEventRequest(string mailbox, string eventId)
+        {
+            var deleteEventRequest = _client
+                .Users[mailbox]
+                .Events[eventId]
+                .Request()
+                .GetHttpRequestMessage();
+
+            deleteEventRequest.Method = HttpMethod.Delete;
+
+            return deleteEventRequest;
         }
     }
 }
