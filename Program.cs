@@ -17,23 +17,23 @@ namespace ExchangeGraphTool
             rootCommand.AddGlobalOption(new Option<string>("--clientSecret", "Graph API Client Secret", ArgumentArity.ExactlyOne));
             rootCommand.AddGlobalOption(new Option<string>("--mailboxTemplate", "Mailbox address template (format <name>{0}@<domain>)", ArgumentArity.ExactlyOne));
             rootCommand.AddGlobalOption(new Option<int>("--numMailbox", "Number of mailboxes to use in template", ArgumentArity.ExactlyOne));
-            rootCommand.AddGlobalOption(new Option<int?>("--startMailbox", "Start number of mailboxes to use in template, default zero", ArgumentArity.ZeroOrOne));
+            rootCommand.AddGlobalOption(new Option<int?>("--startMailbox", "Start number of mailboxes to use in template, default one", ArgumentArity.ZeroOrOne));
 
             var getCommand = new Command("get", "Fetches events matching specified transaction ID, or all events if not specified")
             {
-                new Option<string>("--transactionId", "Use specified ID for transaction ID on events or return all events otherwise", ArgumentArity.ZeroOrOne),
+                new Option<string>("--transactionId", "Use specified ID as prefix for transaction ID on events or return all events otherwise", ArgumentArity.ZeroOrOne),
                 new Option<bool>("--dumpEvents", "Dump event detail", ArgumentArity.ZeroOrOne)
             };
 
             var createCommmand = new Command("create", "Creates sample events")
             {
                 new Option<int?>("--maxEvents", "Max number of events per mailbox, default 1", ArgumentArity.ZeroOrOne),
-                new Option<string>("--transactionId", "Use specified ID for transaction ID on events, otherwise generates a new GUID", ArgumentArity.ZeroOrOne)                
+                new Option<string>("--transactionId", "Use specified ID as prefix for transaction ID on events, otherwise generates a new GUID", ArgumentArity.ZeroOrOne)                
             };
 
             var deleteCommand = new Command("delete", "Deletes events matching specified transaction ID")
             {
-                new Option<string>("--transactionId", "Use specified ID for transaction ID to match events to delete", ArgumentArity.ExactlyOne)
+                new Option<string>("--transactionId", "Use specified ID as prefix for transaction ID to match events to delete", ArgumentArity.ExactlyOne)
             };
 
             getCommand.Handler = CommandHandler.Create<string, string, string, string, int, int?, string, bool>(HandleGet);

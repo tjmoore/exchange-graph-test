@@ -39,48 +39,80 @@ namespace ExchangeGraphTool
             if (mailboxes == null || !mailboxes.Any())
                 return;
 
+            // TODO: batches work in parallel on the server but per mailbox there's a 4 request concurrent limit.
+            // Group into 4s, or spread across batches ensuring no more than 4 of same mailbox in a batch?
+            maxEventsPerMailbox = Math.Min(maxEventsPerMailbox, 4);
+
             int eventNum = 1;
 
+            DateTime start = DateTime.UtcNow;
+
+            for (int numRuns = 0; numRuns < 10; numRuns++)
+            {
+                Console.WriteLine($"Create events in {mailboxes.Count()} mailboxes starting from {start}");
+
+                eventNum = await CreateEvents(mailboxes, start, maxEventsPerMailbox, transactionId, eventNum, token);
+                start = start.AddHours(2);
+            }
+        }
+
+        private async Task<int> CreateEvents(IEnumerable<string> mailboxes, DateTime start, int maxEventsPerMailbox, string transactionId, int eventNum, CancellationToken token)
+        {
             var rnd = new Random();
 
             var requests = new List<BatchRequestStep>();
 
             foreach (var mailbox in mailboxes)
             {
-                DateTime start = DateTime.UtcNow;
+                DateTime nextStart = start;
 
                 int numEvents = rnd.Next(0, maxEventsPerMailbox + 1);
 
-                Console.WriteLine($"{mailbox} - Creating {numEvents} events");
+                //Console.WriteLine($"{mailbox} - Creating {numEvents} events");
 
                 for (int n = 1; n <= numEvents; n++)
                 {
                     string stepId = Guid.NewGuid().ToString();
-                    requests.Add(new BatchRequestStep(stepId, BuildCreateEventRequest(mailbox, $"Event {eventNum}", start, 15, transactionId)));
-                   
-                    start = start.AddMinutes(30);
+                    requests.Add(new BatchRequestStep(stepId, BuildCreateEventRequest(mailbox, $"Event {eventNum}", nextStart, 15, $"{transactionId}_{stepId}")));
+
+                    nextStart = nextStart.AddMinutes(30);
 
                     eventNum++;
                 }
             }
 
-
-            // TODO: batches work in parallel on the server but per mailbox there's a 4 request concurrent limit.
-            // Group into 4s, or spread across batches ensuring no more than 4 of same mailbox in a batch?
-
             var batches = requests.Batch(BatchSize).ToList();
 
             Console.WriteLine($"Sending {requests.Count} requests in {batches.Count} batches");
 
+            int requestNum = 1;
             foreach (var batch in batches)
             {
                 var batchRequest = new BatchRequestContent(batch.ToArray());
+                Console.WriteLine($"Batch - {requestNum}");
 
-                await _client
+                var batchResponse = await _client
                     .Batch
                     .Request()
                     .PostAsync(batchRequest, token);
+
+                var responses = await batchResponse.GetResponsesAsync();
+                foreach (var response in responses)
+                {
+                    if (!response.Value.IsSuccessStatusCode)
+                    {
+                        var request = batchRequest.BatchRequestSteps[response.Key].Request;
+
+                        string requestUri = request.RequestUri.ToString();
+                        string requestContent = await request.Content.ReadAsStringAsync();
+                        string content = await response.Value.Content.ReadAsStringAsync();
+                        Console.WriteLine($"Request failed: {requestUri} - {requestContent}{Environment.NewLine}{(int)response.Value.StatusCode} : {response.Value.ReasonPhrase} - {content}");
+                    }
+                }
+                requestNum++;
             }
+
+            return eventNum;
         }
 
         /// <summary>
@@ -112,12 +144,19 @@ namespace ExchangeGraphTool
 
                 foreach (var mailbox in batch)
                 {
-                    var collectionPage = await batchResponse.GetResponseByIdAsync<UserEventsCollectionResponse>(mailbox);
+                    try
+                    {
+                        var collectionPage = await batchResponse.GetResponseByIdAsync<UserEventsCollectionResponse>(mailbox);
 
-                    List<Event> responseEvents = collectionPage.Value.Where(e => string.IsNullOrEmpty(transactionId) || e.TransactionId == transactionId).ToList();
+                        List<Event> responseEvents = collectionPage.Value.Where(e => string.IsNullOrEmpty(transactionId) || (e.TransactionId != null && e.TransactionId.StartsWith(transactionId))).ToList();
 
-                    if (responseEvents.Any())
-                        events.Add(mailbox, responseEvents);
+                        if (responseEvents.Any())
+                            events.Add(mailbox, responseEvents);
+                    }
+                    catch (ServiceException ex)
+                    {
+                        Console.WriteLine($"Error with mailbox: {mailbox}: {ex.Message}");
+                    }
                 }
             }
 
@@ -139,8 +178,8 @@ namespace ExchangeGraphTool
                             from e in l.Value
                             select new BatchRequestStep(e.ICalUId, BuildDeleteEventRequest(l.Key, e.Id))).ToList();
 
-            // TODO: batches work in parallel on the server but per mailbox there's a 4 request concurrent limit.
-            // Group into 4s, or spread across batches ensuring no more than 4 of same mailbox in a batch?
+            // TODO: this may fail if there are more than 4 events in a mailbox due to concurrent limits per mailbox (4) as the batch will run
+            // concurrently on the server.
 
             var batches = requests.Batch(BatchSize).ToList();
 
