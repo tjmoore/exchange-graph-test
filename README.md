@@ -1,6 +1,14 @@
 # exchange-graph-test
 
-Simple test tool for Microsoft Graph API for populating Exchange mailboxes (e.g. room mailboxes) with calendar events.
+Simple test tool for Microsoft Graph API for populating Exchange mailboxes (e.g. room mailboxes) with calendar events. It illustrates fetching, creating and deleting events and use of batching in Graph API also.
+
+Components used:
+
+* .NET 5
+* Microsoft Graph SDK
+* System.CommandLine
+
+## Detail
 
 This is a specific use case and may not be of use to others directly but feel free to fork and customise or just use as an example.
 
@@ -19,6 +27,8 @@ A transactionId is used per event to track for testing and to allow the `delete`
 `get` fetches events for the mailboxes with a summary count of events, or with `--dumpEvents` it will trace the event responses. If `--transactionId` is specified it filters to only those with that prefix in TransactionId.
 
 `delete` deletes the events based on `--transactionId` used as prefix for the TransactionId.
+
+## Azure AD Application requirements
 
 This requires an application created and configured in Azure AD with application permissions for Graph API for calendar access. See https://docs.microsoft.com/en-us/graph/auth-v2-service
 
