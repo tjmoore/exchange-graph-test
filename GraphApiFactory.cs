@@ -1,74 +1,120 @@
-﻿using Microsoft.Graph;
-using Microsoft.Graph.Auth;
-using Microsoft.Identity.Client;
-using Newtonsoft.Json;
-using Newtonsoft.Json.Converters;
+﻿using Azure.Core;
+using Azure.Identity;
+using Microsoft.Graph;
+using Microsoft.Kiota.Authentication.Azure;
+using Serilog;
 using System;
-using System.Threading.Tasks;
+using System.Collections.Generic;
+using System.Net.Http.Headers;
+using System.Security.Cryptography.X509Certificates;
 
 namespace ExchangeGraphTool
 {
     /// <summary>
     /// Cloud instance
     /// </summary>
-    [JsonConverter(typeof(StringEnumConverter))]
     public enum CloudInstance
     {
+        /// <summary>
+        /// Global cloud service
+        /// </summary>
         Global,
+
+        /// <summary>
+        /// Microsoft Graph China operated by 21Vianet
+        /// </summary>
         China,
-        Germany,
-        US_GOV
+
+        /// <summary>
+        /// Microsoft Graph for US Government L4
+        /// </summary>
+        US_GOV,
+
+        /// <summary>
+        /// Microsoft Graph for US Government L5 (DOD)
+        /// </summary>
+        US_GOV_DOD
     }
 
     internal class GraphApiFactory
     {
+        /// <summary>
+        /// Graph API client instance
+        /// </summary>
         public GraphServiceClient Client { get; private set; }
 
-        public string GetGraphBaseUrl()
+        /// <summary>
+        /// Graph endpoint base URI
+        /// </summary>
+        public Uri GraphBaseUri
         {
-            var uri = new Uri(Client.BaseUrl);
-            return uri.GetLeftPart(UriPartial.Authority);
+            get
+            {
+                if (Client?.RequestAdapter?.BaseUrl == null)
+                    throw new InvalidOperationException("Graph client not initialized");
+
+                var uri = new Uri(Client.RequestAdapter.BaseUrl);
+                return new Uri(uri.GetLeftPart(UriPartial.Authority));
+            }
         }
 
+        /// <summary>
+        /// Authority host URI
+        /// </summary>
+        public Uri AuthorityHost { get; set; }
 
-        public async Task<string> GetAzureADBaseUrl()
+        /// <summary>
+        /// Create an instance of Graph API using Azure AD application credentials
+        /// </summary>
+        /// <param name="clientId">Application/Client ID</param>
+        /// <param name="tenantId">Tenant ID</param>
+        /// <param name="clientSecret">Client secret if clientCert not provided</param>
+        /// <param name="clientCert">Client certificate. If not provided, clientSecret must be provided</param>
+        /// <param name="cloudInstance">Azure/Graph cloud instance</param>
+        public GraphApiFactory(string clientId, string tenantId, string? clientSecret = null, X509Certificate2? clientCert = null, CloudInstance cloudInstance = CloudInstance.Global)
         {
-            var uri = await _confidentialClientApplication.GetAuthorizationRequestUrl(new[] { "https://graph.microsoft.com/.default" }).ExecuteAsync();
-            return uri.GetLeftPart(UriPartial.Authority);
-        }
+            if (string.IsNullOrEmpty(clientId))
+                throw new ArgumentNullException(nameof(clientId));
 
-        private readonly IConfidentialClientApplication _confidentialClientApplication;
+            if (string.IsNullOrEmpty(clientSecret) && clientCert == null)
+                throw new ArgumentNullException(nameof(clientCert), "Must provide either clientCert or clientSecret");
 
-        public GraphApiFactory(string clientId, string tenantId, string clientSecret, CloudInstance cloudInstance = CloudInstance.Global)
-        {
-            var azureCloudInstance = GetAzureCloudInstance(cloudInstance);
+            AuthorityHost = GetAzureCloudInstance(cloudInstance);
             string graphCloudInstance = GetGraphCloudInstance(cloudInstance);
 
-            _confidentialClientApplication = ConfidentialClientApplicationBuilder
-                .Create(clientId)
-                .WithAuthority(azureCloudInstance, tenantId)
-                .WithClientSecret(clientSecret)
-                .Build();
+            var azureClientOptions = new ClientSecretCredentialOptions { AuthorityHost = AuthorityHost };
 
-            ClientCredentialProvider authProvider = new ClientCredentialProvider(_confidentialClientApplication);
+            TokenCredential clientCredential;
+            if (clientCert != null)
+                clientCredential = new ClientCertificateCredential(tenantId, clientId, clientCert, azureClientOptions);
+            else
+                clientCredential = new ClientSecretCredential(tenantId, clientId, clientSecret, azureClientOptions);
+
+            // Set permissions scope based on the cloud instance
+            var baseCloudUri = GetGraphCloudBaseUri(cloudInstance);
+            string[] scopes = [$"{baseCloudUri.Scheme}://{baseCloudUri.Authority}/.default"];
+
+            Log.Debug("Creating Graph API client for cloud instance {@instance} with scopes {@scopes}", cloudInstance, scopes);
+
+            var authProvider = new AzureIdentityAuthenticationProvider(clientCredential, scopes: scopes);
 
             var httpClient = GraphClientFactory.Create(authProvider, nationalCloud: graphCloudInstance);
+            httpClient.DefaultRequestHeaders.UserAgent.Add(new ProductInfoHeaderValue("ExchangeGraphTool"));
 
-            // TODO: update if Graph SDK is updated to passing in httpClient or cloud instance without needing httpClient
-            // (proposed fix still needs URL as param
-            // https://github.com/microsoftgraph/msgraph-sdk-dotnet/issues/916
-            // https://github.com/microsoftgraph/msgraph-sdk-dotnet/pull/959 )
-            Client = new GraphServiceClient(httpClient.BaseAddress.ToString(), authProvider);
+            if (httpClient.BaseAddress == null)
+                throw new InvalidOperationException("Graph client base address not initialized");
+
+            Client = new GraphServiceClient(httpClient, baseUrl: httpClient.BaseAddress.ToString());
         }
 
-        private static AzureCloudInstance GetAzureCloudInstance(CloudInstance cloudInstance)
+        private static Uri GetAzureCloudInstance(CloudInstance cloudInstance)
         {
             return cloudInstance switch
             {
-                CloudInstance.China => AzureCloudInstance.AzureChina,
-                CloudInstance.Germany => AzureCloudInstance.AzureGermany,
-                CloudInstance.US_GOV => AzureCloudInstance.AzureUsGovernment,
-                _ => AzureCloudInstance.AzurePublic,
+                CloudInstance.China => AzureAuthorityHosts.AzureChina,
+                CloudInstance.US_GOV => AzureAuthorityHosts.AzureGovernment,
+                CloudInstance.US_GOV_DOD => AzureAuthorityHosts.AzureGovernment,
+                _ => AzureAuthorityHosts.AzurePublicCloud
             };
         }
 
@@ -77,10 +123,26 @@ namespace ExchangeGraphTool
             return cloudInstance switch
             {
                 CloudInstance.China => GraphClientFactory.China_Cloud,
-                CloudInstance.Germany => GraphClientFactory.Germany_Cloud,
                 CloudInstance.US_GOV => GraphClientFactory.USGOV_Cloud,
+                CloudInstance.US_GOV_DOD => GraphClientFactory.USGOV_DOD_Cloud,
                 _ => GraphClientFactory.Global_Cloud,
             };
+        }
+
+        /// Microsoft Graph service national cloud endpoints
+        /// From GraphClientFactory class in Microsoft Graph SDK. These are inaccessible in the SDK as they are private.
+        /// If they change in the SDK, they need updating here
+        private static readonly Dictionary<CloudInstance, Uri> _cloudList = new()
+        {
+            { CloudInstance.Global, new Uri("https://graph.microsoft.com") },
+            { CloudInstance.US_GOV, new Uri("https://graph.microsoft.us") },
+            { CloudInstance.China, new Uri("https://microsoftgraph.chinacloudapi.cn") },
+            { CloudInstance.US_GOV_DOD, new Uri("https://dod-graph.microsoft.us") }
+        };
+
+        private static Uri GetGraphCloudBaseUri(CloudInstance cloudInstance)
+        {
+            return _cloudList.TryGetValue(cloudInstance, out var uri) ? uri : _cloudList[CloudInstance.Global];
         }
     }
 }

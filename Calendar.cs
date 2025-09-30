@@ -1,31 +1,30 @@
 ﻿using Microsoft.Graph;
+using Microsoft.Graph.Models;
+using Microsoft.Kiota.Abstractions;
+using Serilog;
 using System;
 using System.Collections.Generic;
 using System.Collections.Immutable;
 using System.Linq;
-using System.Net.Http;
 using System.Threading;
 using System.Threading.Tasks;
 
 namespace ExchangeGraphTool
 {
-    public class Calendar
+    public class Calendar(GraphServiceClient client)
     {
-        private const int MaxBatchSize = 20; // Batch max size = 20 at present with Graph API
+        private const int MaxBatchSize = 20;
 
-        private int _batchSize = MaxBatchSize;
+        private readonly int _batchSize = MaxBatchSize;
 
-        private readonly GraphServiceClient _client;
+        private readonly GraphServiceClient _client = client;
+
+        private const string TimeZoneUtcHeader = "outlook.timezone=\"UTC\"";
 
         public int BatchSize
         {
             get => _batchSize;
             set => Math.Min(value, MaxBatchSize);
-        }
-
-        public Calendar(GraphServiceClient client)
-        {
-            _client = client;
         }
 
         /// <summary>
@@ -49,7 +48,7 @@ namespace ExchangeGraphTool
 
             for (int numRuns = 0; numRuns < 10; numRuns++)
             {
-                Console.WriteLine($"Create events in {mailboxes.Count()} mailboxes starting from {start}");
+                Log.Information("Create events in {mailboxes} mailboxes starting from {start}", mailboxes.Count(), start);
 
                 eventNum = await CreateEvents(mailboxes, start, maxEventsPerMailbox, transactionId, eventNum, token);
                 start = start.AddHours(2);
@@ -60,7 +59,7 @@ namespace ExchangeGraphTool
         {
             var rnd = new Random();
 
-            var requests = new List<BatchRequestStep>();
+            var requests = new Dictionary<string, RequestInformation>();
 
             foreach (var mailbox in mailboxes)
             {
@@ -68,12 +67,12 @@ namespace ExchangeGraphTool
 
                 int numEvents = rnd.Next(0, maxEventsPerMailbox + 1);
 
-                //Console.WriteLine($"{mailbox} - Creating {numEvents} events");
+                Log.Debug("{mailbox} - Creating {numEvents} events", mailbox, numEvents);
 
                 for (int n = 1; n <= numEvents; n++)
                 {
                     string stepId = Guid.NewGuid().ToString();
-                    requests.Add(new BatchRequestStep(stepId, BuildCreateEventRequest(mailbox, $"Event {eventNum}", nextStart, 15, $"{transactionId}_{stepId}")));
+                    requests.Add(stepId, BuildCreateEventRequest(mailbox, $"Event {eventNum}", nextStart, 15, $"{transactionId}_{stepId}"));
 
                     nextStart = nextStart.AddMinutes(30);
 
@@ -83,30 +82,29 @@ namespace ExchangeGraphTool
 
             var batches = requests.Batch(BatchSize).ToList();
 
-            Console.WriteLine($"Sending {requests.Count} requests in {batches.Count} batches");
+            Log.Information("Sending {requests} requests in {batches} batches", requests.Count, batches.Count);
 
             int requestNum = 1;
             foreach (var batch in batches)
             {
-                var batchRequest = new BatchRequestContent(batch.ToArray());
-                Console.WriteLine($"Batch - {requestNum}");
+                var batchRequest = new BatchRequestContentCollection(_client);
+                foreach (var step in batch)
+                {
+                    await batchRequest.AddBatchRequestStepAsync(step.Value, step.Key);
+                }
+
+                Log.Information("Batch - {requestNum}", requestNum);
 
                 var batchResponse = await _client
                     .Batch
-                    .Request()
                     .PostAsync(batchRequest, token);
 
-                var responses = await batchResponse.GetResponsesAsync();
-                foreach (var response in responses)
+                var statusCodes = await batchResponse.GetResponsesStatusCodesAsync();
+                foreach (var statusCode in statusCodes)
                 {
-                    if (!response.Value.IsSuccessStatusCode)
+                    if (statusCode.Value != System.Net.HttpStatusCode.OK)
                     {
-                        var request = batchRequest.BatchRequestSteps[response.Key].Request;
-
-                        string requestUri = request.RequestUri.ToString();
-                        string requestContent = await request.Content.ReadAsStringAsync();
-                        string content = await response.Value.Content.ReadAsStringAsync();
-                        Console.WriteLine($"Request failed: {requestUri} - {requestContent}{Environment.NewLine}{(int)response.Value.StatusCode} : {response.Value.ReasonPhrase} - {content}");
+                        Log.Error("Request failed: {id} - {statusCode}", statusCode.Key, statusCode.Value);
                     }
                 }
                 requestNum++;
@@ -116,12 +114,13 @@ namespace ExchangeGraphTool
         }
 
         /// <summary>
-        /// Find sample events created based on transaction ID
+        /// Find sample events created based on transaction ID or all events if transaction ID is null or empty
         /// </summary>
         /// <param name="mailboxes"></param>
+        /// <param name="transactionId"></param>
         /// <param name="token"></param>
         /// <returns></returns>
-        public async Task<IDictionary<string, IList<Event>>> FindEvents(IEnumerable<string> mailboxes, string transactionId, CancellationToken token = default)
+        public async Task<IDictionary<string, IList<Event>>> FindEvents(IEnumerable<string> mailboxes, string? transactionId, CancellationToken token = default)
         {
             if (mailboxes == null || !mailboxes.Any())
                 return ImmutableDictionary<string, IList<Event>>.Empty;
@@ -133,29 +132,49 @@ namespace ExchangeGraphTool
             foreach (var batch in batches)
             {
                 var batchSteps = from mailbox in batch
-                                 select new BatchRequestStep(mailbox, BuildFindEventsRequest(mailbox).GetHttpRequestMessage());
+                                 select new KeyValuePair<string, RequestInformation>
+                                 (mailbox, BuildFindEventsRequest(mailbox));
 
-                var batchRequest = new BatchRequestContent(batchSteps.ToArray());
+                var batchRequest = new BatchRequestContentCollection(_client);
+                foreach (var step in batchSteps)
+                {
+                    await batchRequest.AddBatchRequestStepAsync(step.Value, step.Key);
+                }
 
                 var batchResponse = await _client
                     .Batch
-                    .Request()
                     .PostAsync(batchRequest, token);
 
-                foreach (var mailbox in batch)
+                var statusCodes = await batchResponse.GetResponsesStatusCodesAsync();
+
+                foreach (var statusCode in statusCodes)
                 {
-                    try
+                    if (statusCode.Value == System.Net.HttpStatusCode.OK)
                     {
-                        var collectionPage = await batchResponse.GetResponseByIdAsync<UserEventsCollectionResponse>(mailbox);
+                        try
+                        {
+                            var collectionResponse =
+                                await batchResponse.GetResponseByIdAsync<EventCollectionResponse>(statusCode.Key);
 
-                        List<Event> responseEvents = collectionPage.Value.Where(e => string.IsNullOrEmpty(transactionId) || (e.TransactionId != null && e.TransactionId.StartsWith(transactionId))).ToList();
+                            if (collectionResponse.Value != null)
+                            {
+                                var responseEvents = collectionResponse.Value.Where(e =>
+                                    string.IsNullOrEmpty(transactionId) || (e.TransactionId != null && e.TransactionId.StartsWith(transactionId)))
+                                    .ToList();
 
-                        if (responseEvents.Any())
-                            events.Add(mailbox, responseEvents);
+                                // statusCode.Key should be the mailbox
+                                if (responseEvents.Count != 0)
+                                    events.Add(statusCode.Key, responseEvents);
+                            }
+                        }
+                        catch (Exception ex)
+                        {
+                            Log.Error(ex, "Error with mailbox: {mailbox}: {message}", statusCode.Key, ex.Message);
+                        }
                     }
-                    catch (ServiceException ex)
+                    else
                     {
-                        Console.WriteLine($"Error with mailbox: {mailbox}: {ex.Message}");
+                        Log.Error("Request failed: {id} - {statusCode}", statusCode.Key, statusCode.Value);
                     }
                 }
             }
@@ -176,28 +195,42 @@ namespace ExchangeGraphTool
 
             var requests = (from l in eventLists
                             from e in l.Value
-                            select new BatchRequestStep(e.ICalUId, BuildDeleteEventRequest(l.Key, e.Id))).ToList();
+                            where !string.IsNullOrEmpty(e.ICalUId) && !string.IsNullOrEmpty(e.Id)
+                            select new KeyValuePair<string, RequestInformation>(e.ICalUId!, BuildDeleteEventRequest(l.Key, e.Id!)))
+                            .ToList();
 
             // TODO: this may fail if there are more than 4 events in a mailbox due to concurrent limits per mailbox (4) as the batch will run
             // concurrently on the server.
 
             var batches = requests.Batch(BatchSize).ToList();
 
-            Console.WriteLine($"Sending {requests.Count} requests in {batches.Count} batches");
+            Log.Information("Sending {requests} requests in {batches} batches", requests.Count, batches.Count);
 
             foreach (var batch in batches)
             {
-                var batchRequest = new BatchRequestContent(batch.ToArray());
+                var batchRequest = new BatchRequestContentCollection(_client);
+                foreach (var step in batch)
+                {
+                    await batchRequest.AddBatchRequestStepAsync(step.Value, step.Key);
+                }
 
-                await _client
+                var batchResponse = await _client
                     .Batch
-                    .Request()
                     .PostAsync(batchRequest, token);
+
+                var statusCodes = await batchResponse.GetResponsesStatusCodesAsync();
+                foreach (var statusCode in statusCodes)
+                {
+                    if (statusCode.Value != System.Net.HttpStatusCode.OK)
+                    {
+                        Log.Error("Request failed: {id} - {statusCode}", statusCode.Key, statusCode.Value);
+                    }
+                }
             }
         }
 
 
-        private HttpRequestMessage BuildCreateEventRequest(string mailbox, string subject, DateTime startUtc, int duration, string transactionId)
+        private RequestInformation BuildCreateEventRequest(string mailbox, string subject, DateTime startUtc, int duration, string transactionId)
         {
             var newEvent = new Event
             {
@@ -215,42 +248,34 @@ namespace ExchangeGraphTool
                 }
             };
 
-            var jsonEvent = _client.HttpProvider.Serializer.SerializeAsJsonContent(newEvent);
-
-            var addEventRequest = _client
+            return _client
                 .Users[mailbox]
                 .Events
-                .Request()
-                .Header("Prefer", $"outlook.timezone=\"UTC\"")
-                .GetHttpRequestMessage();
-
-            addEventRequest.Method = HttpMethod.Post;
-            addEventRequest.Content = jsonEvent;
-
-            return addEventRequest;
+                .ToPostRequestInformation(newEvent, (config) =>
+                {
+                    config.Headers.Add("Prefer", TimeZoneUtcHeader);
+                });
         }
 
-        private IUserEventsCollectionRequest BuildFindEventsRequest(string mailbox)
+        private RequestInformation BuildFindEventsRequest(string mailbox)
         {
             return _client
                 .Users[mailbox]
                 .Events
-                .Request()
-                .Top(99999)
-                .OrderBy("start/dateTime");
+                .ToGetRequestInformation((config) =>
+                {
+                    config.Headers.Add("Prefer", TimeZoneUtcHeader);
+                    config.QueryParameters.Top = 99999;
+                    config.QueryParameters.Orderby = ["start/dateTime"];
+                });
         }
 
-        private HttpRequestMessage BuildDeleteEventRequest(string mailbox, string eventId)
+        private RequestInformation BuildDeleteEventRequest(string mailbox, string eventId)
         {
-            var deleteEventRequest = _client
+            return _client
                 .Users[mailbox]
                 .Events[eventId]
-                .Request()
-                .GetHttpRequestMessage();
-
-            deleteEventRequest.Method = HttpMethod.Delete;
-
-            return deleteEventRequest;
+                .ToDeleteRequestInformation();
         }
     }
 }
