@@ -1,5 +1,7 @@
 # exchange-graph-test
 
+[![Build](https://github.com/tjmoore/exchange-graph-test/actions/workflows/build.yml/badge.svg)](https://github.com/tjmoore/exchange-graph-test/actions/workflows/build.yml)
+
 Simple example and test tool for Microsoft Graph API for various operations
 
 At present this is focused on a specific use case of bulk creating calendar events in multiple mailboxes.
