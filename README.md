@@ -19,17 +19,36 @@ This is based on a test set up with test mailboxes with the same name pattern di
 
 e.g. testroom1@mydomain, testroom2@mydomain, etc
 
-`--mailboxTemplate` must be supplied as a format string, e.g. `testroom{0}@mydomain` for it to populate the mailbox addresses to use.
+`--mailbox-template` must be supplied as a format string, e.g. `testroom{0}@mydomain` for it to populate the mailbox addresses to use.
 
-`--numMailbox` specifies the number of mailboxes to iterrate and `--startMailbox` the initial number (default 1)
+`--num-mailbox` specifies the number of mailboxes to iterrate and `--start-mailbox` the initial number (default 1)
 
-A transactionId is used per event to track for testing and to allow the `delete` command to find the events. `--transactionId` allows specifying of an ID. This is used as a prefix, each event will have a unique ID appended. On delete it searches for the prefix in each event.
+A transactionId is used per event to track for testing and to allow the `delete` command to find the events. `--transaction-id` allows specifying of an ID. This is used as a prefix, each event will have a unique ID appended. On delete it searches for the prefix in each event.
 
-`create-events` does 10 runs through all mailboxes incrementing date every 2 hours and creates a random number of events per mailbox. Due to concurrency limits per mailbox (4 requests) it will only create up to 4 events per mailbox in a run. `--maxEvents` controls how many events to create per mailbox (a value greater than 4 will result in a max of 4).
+`create-events` does 10 runs through all mailboxes incrementing date every 2 hours and creates a random number of events per mailbox. Due to concurrency limits per mailbox (4 requests) it will only create up to 4 events per mailbox in a run. `--max-events` controls how many events to create per mailbox (a value greater than 4 will result in a max of 4).
 
-`get-events` fetches events for the mailboxes with a summary count of events, or with `--dumpEvents` it will trace the event responses. If `--transactionId` is specified it filters to only those with that prefix in TransactionId.
+`get-events` fetches events for the mailboxes with a summary count of events, or with `--dump-events` it will trace the event responses. If `--transaction-id` is specified it filters to only those with that prefix in TransactionId.
 
-`delete-events` deletes the events based on `--transactionId` used as prefix for the TransactionId.
+`delete-events` deletes the events based on `--transaction-id` used as prefix for the TransactionId.
+
+For example:
+
+Create events in first 10 mailboxes with max 10 events per mailbox and transaction ID "test123":
+```powershell
+create-events --mailbox-template "testroom{0}@mydomain" --num-mailbox 10 --max-events 10 --transaction-id "test123" --client-id "<client-id>" --tenant-id "<tenant-id>" --client-secret "<client-secret>"
+```
+
+Fetch events in first 10 mailboxes with transaction ID "test123" and dump event details:
+```powershell
+get-events --mailbox-template "testroom{0}@mydomain" --num-mailbox 10 --transaction-id "test123" --dump-events --client-id "<client-id>" --tenant-id "<tenant-id>" --client-secret "<client-secret>"
+```
+
+Delete events in first 10 mailboxes with transaction ID "test123":
+```powershell
+delete-events --mailbox-template "testroom{0}@mydomain" --num-mailbox 10 --transaction-id "test123" --client-id "<client-id>" --tenant-id "<tenant-id>" --client-secret "<client-secret>"
+```
+
+
 
 ## Azure AD Application requirements
 
@@ -62,8 +81,8 @@ Commands:
     --start-mailbox <startMailbox>        Start number of mailboxes to use in template, default one
     --transaction-id                      Use specified ID as prefix for transaction ID on events or return all events otherwise
     --dump-events                         Dump event detail
-  create-events  Creates sample events
 
+  create-events  Creates sample events
   Options:
     --mailbox-template <mailboxTemplate>  Mailbox address template (format <name>{0}@<domain>)
     --num-mailbox <numMailbox>            Number of mailboxes to use in template
