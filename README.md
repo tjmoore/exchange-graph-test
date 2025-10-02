@@ -25,7 +25,7 @@ e.g. testroom1@mydomain, testroom2@mydomain, etc
 
 A transactionId is used per event to track for testing and to allow the `delete` command to find the events. `--transaction-id` allows specifying of an ID. This is used as a prefix, each event will have a unique ID appended. On delete it searches for the prefix in each event.
 
-`create-events` does 10 runs through all mailboxes incrementing date every 2 hours and creates a random number of events per mailbox. Due to concurrency limits per mailbox (4 requests) it will only create up to 4 events per mailbox in a run. `--max-events` controls how many events to create per mailbox (a value greater than 4 will result in a max of 4).
+`create-events` does 10 runs through all mailboxes incrementing date every 2 hours and creates a random number of events per mailbox. Due to concurrency limits per mailbox (4 requests) it will only create up to 4 events per mailbox in a run. `--max-events` controls how many events to create per mailbox per run (a value greater than 4 will result in a max of 4).
 
 `get-events` fetches events for the mailboxes with a summary count of events, or with `--dump-events` it will trace the event responses. If `--transaction-id` is specified it filters to only those with that prefix in TransactionId.
 
@@ -60,42 +60,77 @@ This requires an application created and configured in Azure AD with application
 ## Usage
 
 ```
-ExchangeGraphTool
-  Exchange Graph API test tool
+Description:
+  Exchange Graph API test tool v1.0.0
 
 Usage:
-  ExchangeGraphTool [options] [command]
+  ExchangeGraphTool [command] [options]
 
 Options:
-  --client-id <clientId>                Graph API Client ID
-  --tenant-id <tenantId>                Graph API Tenant ID
-  --client-secret <clientSecret>        Graph API Client Secret
-  --version                             Show version information
-  -?, -h, --help                        Show help and usage information
+  -?, -h, --help  Show help and usage information
+  --version       Show version information
 
 Commands:
   get-events     Fetches events matching specified transaction ID, or all events if not specified
-  Options:
-    --mailbox-template <mailboxTemplate>  Mailbox address template (format <name>{0}@<domain>)
-    --num-mailbox <numMailbox>            Number of mailboxes to use in template
-    --start-mailbox <startMailbox>        Start number of mailboxes to use in template, default one
-    --transaction-id                      Use specified ID as prefix for transaction ID on events or return all events otherwise
-    --dump-events                         Dump event detail
-
   create-events  Creates sample events
-  Options:
-    --mailbox-template <mailboxTemplate>  Mailbox address template (format <name>{0}@<domain>)
-    --num-mailbox <numMailbox>            Number of mailboxes to use in template
-    --start-mailbox <startMailbox>        Start number of mailboxes to use in template, default one
-    --max-events                          Max number of events per mailbox, default 1
-    --transaction-id                      Use specified ID as prefix for transaction ID on events, otherwise generates a new GUID
   delete-events  Deletes events matching specified transaction ID
+```
 
-  Options:
-    --mailbox-template <mailboxTemplate>  Mailbox address template (format <name>{0}@<domain>)
-    --num-mailbox <numMailbox>            Number of mailboxes to use in template
-    --start-mailbox <startMailbox>        Start number of mailboxes to use in template, default one
-    --transaction-id                      Use specified ID as prefix for transaction ID to match events to delete
- ```
+```
+Description:
+  Creates sample events
+
+Usage:
+  ExchangeGraphTool create-events [options]
+
+Options:
+  -cid, --client-id <client-id>               Graph API Client ID
+  -tid, --tenant-id <tenant-id>               Graph API Tenant ID
+  -cs, --client-secret <client-secret>        Graph API Client Secret
+  -mt, --mailbox-template <mailbox-template>  Mailbox address template (format <name>{0}@<domain>)
+  -nm, --num-mailbox <num-mailbox>            Number of mailboxes to use in template
+  -sm, --start-mailbox <start-mailbox>        Start number of mailboxes to use in template, default one
+  -bs, --batch-size <batch-size>              Max batch size for Graph API calls, default 20
+  -trid, --transaction-id <transaction-id>    Use specified ID as prefix for transaction ID on events
+  -me, --max-events <max-events>              Max number of events per mailbox per run, default 1, max 4
+  -?, -h, --help                              Show help and usage information
+```
  
- 
+```
+ Description:
+  Fetches events matching specified transaction ID, or all events if not specified
+
+Usage:
+  ExchangeGraphTool get-events [options]
+
+Options:
+  -cid, --client-id <client-id>               Graph API Client ID
+  -tid, --tenant-id <tenant-id>               Graph API Tenant ID
+  -cs, --client-secret <client-secret>        Graph API Client Secret
+  -mt, --mailbox-template <mailbox-template>  Mailbox address template (format <name>{0}@<domain>)
+  -nm, --num-mailbox <num-mailbox>            Number of mailboxes to use in template
+  -sm, --start-mailbox <start-mailbox>        Start number of mailboxes to use in template, default one
+  -bs, --batch-size <batch-size>              Max batch size for Graph API calls, default 20
+  -trid, --transaction-id <transaction-id>    Use specified ID as prefix for transaction ID on events
+  -dump, --dump-events                        Dump event detail
+  -?, -h, --help                              Show help and usage information
+```
+
+```
+Description:
+  Deletes events matching specified transaction ID
+
+Usage:
+  ExchangeGraphTool delete-events [options]
+
+Options:
+  -cid, --client-id <client-id>               Graph API Client ID
+  -tid, --tenant-id <tenant-id>               Graph API Tenant ID
+  -cs, --client-secret <client-secret>        Graph API Client Secret
+  -mt, --mailbox-template <mailbox-template>  Mailbox address template (format <name>{0}@<domain>)
+  -nm, --num-mailbox <num-mailbox>            Number of mailboxes to use in template
+  -sm, --start-mailbox <start-mailbox>        Start number of mailboxes to use in template, default one
+  -bs, --batch-size <batch-size>              Max batch size for Graph API calls, default 20
+  -trid, --transaction-id <transaction-id>    Use specified ID as prefix for transaction ID on events
+  -?, -h, --help                              Show help and usage information
+```

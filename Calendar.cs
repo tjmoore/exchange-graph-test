@@ -6,6 +6,7 @@ using System;
 using System.Collections.Generic;
 using System.Collections.Immutable;
 using System.Linq;
+using System.Net;
 using System.Threading;
 using System.Threading.Tasks;
 
@@ -13,19 +14,13 @@ namespace ExchangeGraphTool
 {
     public class Calendar(GraphServiceClient client)
     {
-        private const int MaxBatchSize = 20;
-
-        private readonly int _batchSize = MaxBatchSize;
+        private const int DefaultBatchSize = 20;
 
         private readonly GraphServiceClient _client = client;
 
         private const string TimeZoneUtcHeader = "outlook.timezone=\"UTC\"";
 
-        public int BatchSize
-        {
-            get => _batchSize;
-            set => Math.Min(value, MaxBatchSize);
-        }
+        public int BatchSize { get; set; } = DefaultBatchSize;
 
         /// <summary>
         /// Create sample events in each of the specified mailbox calendars, with random number of events up to maxEventsPerMailbox
@@ -102,7 +97,7 @@ namespace ExchangeGraphTool
                 var statusCodes = await batchResponse.GetResponsesStatusCodesAsync();
                 foreach (var statusCode in statusCodes)
                 {
-                    if (statusCode.Value != System.Net.HttpStatusCode.OK)
+                    if (!IsSuccessStatusCode(statusCode.Value))
                     {
                         Log.Error("Request failed: {id} - {statusCode}", statusCode.Key, statusCode.Value);
                     }
@@ -129,6 +124,8 @@ namespace ExchangeGraphTool
 
             var events = new Dictionary<string, IList<Event>>();
 
+            Log.Information("Sending {requests} requests in {batches} batches", mailboxes.Count(), batches.Count());
+
             foreach (var batch in batches)
             {
                 var batchSteps = from mailbox in batch
@@ -151,7 +148,7 @@ namespace ExchangeGraphTool
 
                 foreach (var statusCode in statusCodes)
                 {
-                    if (statusCode.Value == System.Net.HttpStatusCode.OK)
+                    if (IsSuccessStatusCode(statusCode.Value))
                     {
                         try
                         {
@@ -223,7 +220,7 @@ namespace ExchangeGraphTool
                 var statusCodes = await batchResponse.GetResponsesStatusCodesAsync();
                 foreach (var statusCode in statusCodes)
                 {
-                    if (statusCode.Value != System.Net.HttpStatusCode.OK)
+                    if (!IsSuccessStatusCode(statusCode.Value))
                     {
                         Log.Error("Request failed: {id} - {statusCode}", statusCode.Key, statusCode.Value);
                     }
@@ -279,5 +276,8 @@ namespace ExchangeGraphTool
                 .Events[eventId]
                 .ToDeleteRequestInformation();
         }
+
+        public static bool IsSuccessStatusCode(HttpStatusCode statusCode) =>
+            ((int)statusCode >= 200) && ((int)statusCode <= 299);
     }
 }
