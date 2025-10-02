@@ -94,12 +94,19 @@ namespace ExchangeGraphTool
             var baseCloudUri = GetGraphCloudBaseUri(cloudInstance);
             string[] scopes = [$"{baseCloudUri.Scheme}://{baseCloudUri.Authority}/.default"];
 
-            Log.Debug("Creating Graph API client for cloud instance {@instance} with scopes {@scopes}", cloudInstance, scopes);
+            Log.Information("Creating Graph API client for cloud instance {@instance}", cloudInstance);
+            Log.Information("Authority host: {host}", AuthorityHost);
+            Log.Information("Graph cloud instance URL {baseUrl}", baseCloudUri);
+            Log.Information("Scopes: {@scopes}", scopes);
+            Log.Information("Using client ID {clientId} in tenant {tenantId}", clientId, tenantId);
+            Log.Information("Authenticating with {authType}", clientCert != null ? "client certificate" : "client secret");
 
             var authProvider = new AzureIdentityAuthenticationProvider(clientCredential, scopes: scopes);
+            
+            string version = $"{Program.AppVersion?.Major}.{Program.AppVersion?.Minor}.{Program.AppVersion?.Build}";
 
             var httpClient = GraphClientFactory.Create(authProvider, nationalCloud: graphCloudInstance);
-            httpClient.DefaultRequestHeaders.UserAgent.Add(new ProductInfoHeaderValue("ExchangeGraphTool"));
+            httpClient.DefaultRequestHeaders.UserAgent.Add(new ProductInfoHeaderValue("ExchangeGraphTool", version));
 
             if (httpClient.BaseAddress == null)
                 throw new InvalidOperationException("Graph client base address not initialized");

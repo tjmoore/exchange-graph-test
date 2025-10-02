@@ -10,8 +10,16 @@ namespace ExchangeGraphTool
 {
     class Program
     {
+        public static Version? AppVersion = null;
+
         static async Task<int> Main(string[] args)
         {
+            AppVersion = typeof(Program).Assembly.GetName().Version;
+
+            Log.Logger = new LoggerConfiguration()
+                .WriteTo.Console()
+                .CreateLogger();
+
             var clientIdOption = new Option<string>("--client-id", [ "-cid" ])
             { Description = "Graph API Client ID", Arity = ArgumentArity.ExactlyOne };
 
@@ -39,18 +47,27 @@ namespace ExchangeGraphTool
             var maxEventsOption = new Option<int?>("--max-events", [ "-me" ])
             { Description = "Max number of events per mailbox, default 1", Arity = ArgumentArity.ZeroOrOne };
 
+            // There used to be global options in previous version of CommandLine but can't find that now
+            // so have to add these for each command
+            Option[] authOptions = [
+                clientIdOption,
+                tenantIdOption,
+                clientSecretOption
+            ];
+
             Option[] eventOptions = [
                 mailBoxTemplateOption,
                 numMailboxOption,
                 startMailboxOption
             ];
 
-            var rootCommand = new RootCommand("Exchange Graph API test tool");
+            var rootCommand = new RootCommand($"Exchange Graph API test tool v{AppVersion?.Major}.{AppVersion?.Minor}.{AppVersion?.Build}");
             rootCommand.AddOptions([clientIdOption, tenantIdOption, clientSecretOption]);
 
             var getCommand = new Command("get-events", "Fetches events matching specified transaction ID, or all events if not specified");
             getCommand.AddOptions(
             [
+                ..authOptions,
                 ..eventOptions,
                 transactionIdOption,
                 dumpEventsOption
@@ -59,6 +76,7 @@ namespace ExchangeGraphTool
             var createCommmand = new Command("create-events", "Creates sample events");
             createCommmand.AddOptions(
             [
+                ..authOptions,
                 ..eventOptions,
                 maxEventsOption,
                 transactionIdOption
@@ -67,6 +85,7 @@ namespace ExchangeGraphTool
             var deleteCommand = new Command("delete-events", "Deletes events matching specified transaction ID");
             deleteCommand.AddOptions(
             [
+                ..authOptions,
                 ..eventOptions,
                 transactionIdOption
             ]);

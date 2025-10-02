@@ -141,6 +141,8 @@ namespace ExchangeGraphTool
                     await batchRequest.AddBatchRequestStepAsync(step.Value, step.Key);
                 }
 
+                Log.Debug("Batch request: {@batchRequest}", batchRequest);
+
                 var batchResponse = await _client
                     .Batch
                     .PostAsync(batchRequest, token);
